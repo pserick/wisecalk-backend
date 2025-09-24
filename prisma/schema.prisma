@@ -1,0 +1,298 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model with audit fields
+model User {
+  id        String   @id @default(cuid())
+  auth0Id   String   @unique @map("auth0_id")
+  email     String   @unique
+  firstName String?  @map("first_name")
+  lastName  String?  @map("last_name")
+  timezone  String   @default("UTC")
+  locale    String   @default("en-US")
+
+  // Audit fields
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  accounts     Account[]
+  categories   Category[]
+  transactions Transaction[]
+  budgets      Budget[]
+  goals        Goal[]
+
+  @@map("users")
+  @@index([email])
+  @@index([deletedAt])
+}
+
+// Currency model for multi-currency support
+model Currency {
+  id     String @id @default(cuid())
+  code   String @unique // ISO 4217 codes (USD, EUR, BRL, etc.)
+  name   String
+  symbol String
+
+  // Audit fields
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  accounts          Account[]
+  transactions      Transaction[]
+  exchangeRatesFrom ExchangeRate[] @relation("FromCurrency")
+  exchangeRatesTo   ExchangeRate[] @relation("ToCurrency")
+  budgets           Budget[]
+  goals             Goal[]
+
+  @@map("currencies")
+  @@index([code])
+  @@index([deletedAt])
+}
+
+// Exchange rates for currency conversion
+model ExchangeRate {
+  id             String   @id @default(cuid())
+  fromCurrency   Currency @relation("FromCurrency", fields: [fromCurrencyId], references: [id])
+  fromCurrencyId String   @map("from_currency_id")
+  toCurrency     Currency @relation("ToCurrency", fields: [toCurrencyId], references: [id])
+  toCurrencyId   String   @map("to_currency_id")
+  rate           Decimal  @db.Decimal(18, 8) // High precision for exchange rates
+  date           DateTime @db.Date
+
+  // Audit fields
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  @@unique([fromCurrencyId, toCurrencyId, date])
+  @@map("exchange_rates")
+  @@index([fromCurrencyId, toCurrencyId, date])
+  @@index([date])
+  @@index([deletedAt])
+}
+
+// Account/Wallet model
+model Account {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  type        AccountType
+  balance     Decimal     @default(0) @db.Decimal(15, 2)
+  currency    Currency    @relation(fields: [currencyId], references: [id])
+  currencyId  String      @map("currency_id")
+  user        User        @relation(fields: [userId], references: [id])
+  userId      String      @map("user_id")
+  isActive    Boolean     @default(true) @map("is_active")
+
+  // Audit fields
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  transactions Transaction[]
+
+  @@map("accounts")
+  @@index([userId, isActive])
+  @@index([type])
+  @@index([currencyId])
+  @@index([deletedAt])
+  @@index([userId, type, isActive]) // Composite index for user account filtering
+}
+
+enum AccountType {
+  CHECKING
+  SAVINGS
+  CREDIT_CARD
+  INVESTMENT
+  CASH
+  CRYPTO
+  LOAN
+  OTHER
+}
+
+// Category model for transaction categorization
+model Category {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  color       String?      // Hex color for UI
+  icon        String?      // Icon identifier
+  type        CategoryType
+  user        User         @relation(fields: [userId], references: [id])
+  userId      String       @map("user_id")
+  parent      Category?    @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  parentId    String?      @map("parent_id")
+  isActive    Boolean      @default(true) @map("is_active")
+
+  // Audit fields
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  // Relations
+  children     Category[]    @relation("CategoryHierarchy")
+  transactions Transaction[]
+  budgets      Budget[]
+
+  @@unique([userId, name, parentId]) // Prevent duplicate category names per user/parent
+  @@map("categories")
+  @@index([userId, type, isActive])
+  @@index([parentId])
+  @@index([type])
+  @@index([deletedAt])
+}
+
+enum CategoryType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+// Transaction model - core financial data
+model Transaction {
+  id            String          @id @default(cuid())
+  amount        Decimal         @db.Decimal(15, 2) // Precise monetary amounts
+  description   String
+  notes         String?
+  type          TransactionType
+  date          DateTime        @db.Date
+
+  // Foreign keys
+  account       Account         @relation(fields: [accountId], references: [id])
+  accountId     String          @map("account_id")
+  category      Category        @relation(fields: [categoryId], references: [id])
+  categoryId    String          @map("category_id")
+  currency      Currency        @relation(fields: [currencyId], references: [id])
+  currencyId    String          @map("currency_id")
+  user          User            @relation(fields: [userId], references: [id])
+  userId        String          @map("user_id")
+
+  // Transfer handling
+  transferTo    Transaction?    @relation("TransferPair", fields: [transferToId], references: [id])
+  transferToId  String?         @unique @map("transfer_to_id")
+  transferFrom  Transaction?    @relation("TransferPair")
+
+  // Receipt/attachment support
+  receiptUrl    String?         @map("receipt_url")
+
+  // Reconciliation
+  isReconciled  Boolean         @default(false) @map("is_reconciled")
+  reconciledAt  DateTime?       @map("reconciled_at")
+
+  // Audit fields
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  deletedAt     DateTime?       @map("deleted_at")
+
+  @@map("transactions")
+  @@index([userId, date])
+  @@index([accountId, date])
+  @@index([categoryId, date])
+  @@index([type, date])
+  @@index([userId, type, date]) // Composite for filtering user transactions by type and date
+  @@index([userId, accountId, date]) // Composite for account statements
+  @@index([userId, categoryId, date]) // Composite for category reports
+  @@index([deletedAt])
+  @@index([isReconciled])
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+  TRANSFER
+}
+
+// Budget model for expense planning
+model Budget {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  amount      Decimal      @db.Decimal(15, 2)
+  period      BudgetPeriod
+  startDate   DateTime     @db.Date @map("start_date")
+  endDate     DateTime     @db.Date @map("end_date")
+  isActive    Boolean      @default(true) @map("is_active")
+
+  // Foreign keys
+  user        User         @relation(fields: [userId], references: [id])
+  userId      String       @map("user_id")
+  currency    Currency     @relation(fields: [currencyId], references: [id])
+  currencyId  String       @map("currency_id")
+  category    Category     @relation(fields: [categoryId], references: [id])
+  categoryId  String       @map("category_id")
+
+  // Notifications
+  alertThreshold Decimal?  @db.Decimal(5, 2) @map("alert_threshold") // Percentage (0-100)
+
+  // Audit fields
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  deletedAt   DateTime?    @map("deleted_at")
+
+  @@map("budgets")
+  @@index([userId, isActive])
+  @@index([categoryId, startDate, endDate])
+  @@index([period])
+  @@index([deletedAt])
+  @@index([userId, period, isActive]) // Composite for user budget filtering
+}
+
+enum BudgetPeriod {
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  CUSTOM
+}
+
+// Goal model for financial objectives
+model Goal {
+  id            String    @id @default(cuid())
+  name          String
+  description   String?
+  targetAmount  Decimal   @db.Decimal(15, 2) @map("target_amount")
+  currentAmount Decimal   @default(0) @db.Decimal(15, 2) @map("current_amount")
+  targetDate    DateTime? @db.Date @map("target_date")
+  isCompleted   Boolean   @default(false) @map("is_completed")
+  completedAt   DateTime? @map("completed_at")
+
+  // Foreign keys
+  user          User      @relation(fields: [userId], references: [id])
+  userId        String    @map("user_id")
+  currency      Currency  @relation(fields: [currencyId], references: [id])
+  currencyId    String    @map("currency_id")
+
+  // Goal type
+  type          GoalType
+
+  // Audit fields
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  @@map("goals")
+  @@index([userId, isCompleted])
+  @@index([type])
+  @@index([targetDate])
+  @@index([deletedAt])
+  @@index([userId, type, isCompleted]) // Composite for user goal filtering
+}
+
+enum GoalType {
+  SAVINGS
+  DEBT_PAYOFF
+  INVESTMENT
+  EMERGENCY_FUND
+  OTHER
+}
