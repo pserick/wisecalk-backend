@@ -29,8 +29,10 @@
 
 Before running this project, make sure you have:
 
-- **Node.js** (v18 or higher)
-- **npm** or **yarn**
+- **Node.js** (v18.0.0 or higher, v22.19.0 recommended)
+  - Check `package.json` engines field for exact version requirements
+  - Use `nvm use` if you have nvm installed (reads from `.nvmrc`)
+- **npm** (v8.0.0 or higher)
 - **PostgreSQL** (v15 or higher)
 - **Docker** (optional, for containerized development)
 - **Auth0 Account** (for authentication)
@@ -39,11 +41,21 @@ Before running this project, make sure you have:
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/pserick/wisecalk-backend.git
    cd wisecalk-backend
    ```
 
-2. **Install dependencies**:
+2. **Ensure correct Node.js version**:
+   ```bash
+   # If using nvm (Node Version Manager)
+   nvm use
+
+   # Verify Node.js and npm versions
+   node --version  # Should be >=18.0.0
+   npm --version   # Should be >=8.0.0
+   ```
+
+3. **Install dependencies**:
    ```bash
    npm install
    ```
